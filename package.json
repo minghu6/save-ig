@@ -1,0 +1,28 @@
+{
+  "name": "save-ig",
+  "version": "1.0.0",
+  "description": "save ig picture and video(maybe)",
+  "main": "app.js",
+  "scripts": {
+    "test": "node app.js --debug",
+    "start": "node app.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@bitbucket.org/minghu6/save-ig.git"
+  },
+  "keywords": [
+    "Instagram",
+    "Save"
+  ],
+  "author": "minghu6",
+  "license": "ISC",
+  "homepage": "https://bitbucket.org/minghu6/save-ig#readme",
+  "dependencies": {
+    "axios": "^0.19.0",
+    "expand-tilde": "^2.0.2",
+    "puppeteer": "^2.0.0",
+    "readline-sync": "^1.4.10",
+    "sorted-array": "^2.0.4"
+  }
+}
