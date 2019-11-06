@@ -3,8 +3,14 @@
 
 ## Usage:
 ```bash
-save-ig
-save-ig --debug  // headless: false
+node:
+    node app.js 
+args:
+    --debug  // headless: false
+    --latest  // update latest number of saved page
+
+npm:
+    npm test -- --latest 100
 ```
 
 
@@ -36,11 +42,8 @@ sudo apt-get install gconf-service libasound2 libatk1.0-0 libatk-bridge2.0-0 lib
 ## Issue:
 
 1. unknown behavior upon download Big video
-2. 访问ig的语言限定简中 (一些元素定位依靠本地化的字符串比对)
-3. 二元认证？那是什么东西！
-4. 外文是不是可以翻译一下，但找不到水平特别高的翻译和开放接口（谷歌翻译也就那样吧）
-5. 总感觉这种工具寿命很短，一旦页面结构有一点儿变化就可能直接GG，需要琐碎地不断维护
-6. 更能最重要的是chrome简直是吃内存的怪兽，8G电脑跑一个就别想再开一个看资料了
+1. 访问ig的语言限定简中 (一些元素定位依靠本地化的字符串比对)
+1. 更能最重要的是chrome简直是吃内存的怪兽，8G电脑跑基本上只能运行一个实例
 
 
 ## Core Idea:

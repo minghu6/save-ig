@@ -21,6 +21,7 @@ const SCROLL_WAIT = CONFIG_OBJ.scrollWait;
 
 let downloadStat;
 let enableDebug;
+let latestNumber;
 
 
 const unionSet = (set1, set2) => {
@@ -128,9 +129,7 @@ async function fetchMediaRelatedInfo(page) {
     const postFn = postName+'.post.txt';
     const postFullPath = path.join(subDir, postFn);
     if (fs.existsSync(postFullPath)) {
-        if (enableDebug) {
-            console.log(`${postFn} existed, skip.\n`);
-        }
+        console.log(`${postFn} existed, skip.\n`);
         downloadStat.skipped += 1;
     } else {
         const postGroup = originPost.match(purePostPattern);
@@ -172,9 +171,7 @@ async function downloadOneMedia(maxSizeMedia, subDir, postName) {
     const mediaFullPath = path.join(subDir, mediaFn);
 
     if (fs.existsSync(mediaFullPath)) {
-        if (enableDebug) {
-            console.log(`${mediaFn} existed, skip.\n`);
-        }
+        console.log(`${mediaFn} existed, skip.\n`);
         downloadStat.skipped += 1;
     } else {
         fs.writeFile(mediaFullPath, await maxSizeMedia.buffer, err => {
@@ -333,7 +330,7 @@ async function saveALinks(browser, aLinks) {
     }));
     // for (let i=0;i<aLinks.length;++i) {
     //     await saveMedia(browser, aLinks[i]);
-    // }
+    // }  // 一个页面一个页面打开，方便测试
 }
 
 async function loadSavedPage(browser, page) {
@@ -348,11 +345,11 @@ async function loadSavedPage(browser, page) {
     await page.setViewport(VIEWPORT);
     boundingBox = await bodyHandle.boundingBox();
     curH = boundingBox.y;
-    prevH = Number.MAX_VALUE;
+    prevH = Number.MAX_SAFE_INTEGER;
     prevALinks = new Set();
     curALinks = new Set();
 
-    while (prevH !== curH) {
+    while (prevH !== curH && prevALinks.size < latestNumber) {
         prevALinks = unionSet(prevALinks, curALinks);
         curALinks = await toAHrefSet(await page.$$('a'));
         const newALinks = diffSet(curALinks, prevALinks);
@@ -384,8 +381,17 @@ const createDirIfNotExist = dirname => {
 
 async function main() {
     const username = LOGINNAME;
+    latestNumber = Number.MAX_SAFE_INTEGER;
 
-    enableDebug = Boolean(process.argv.filter(arg => arg == '--debug').length);
+    for (let i=0;i<process.argv.length;++i) {
+        if (process.argv[i] == '--debug') {
+            enableDebug = true;
+        }
+
+        if (process.argv[i] == '--latest' && process.argv[i+1]) {
+            latestNumber = parseInt(process.argv[i+1]);
+        }
+    }
 
     const password = readlineSync.question(`@${username} password: `, {hideEchoBack: true});
 
