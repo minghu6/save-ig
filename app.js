@@ -259,7 +259,7 @@ async function saveMedia(browser, aHref) {
     const mediaSet = new CustomizedSet([], media => media.size);
 
     page.on('response', async function(response){
-        if(response.url().includes('https://scontent-sin2-2.cdninstagram.com')){
+        if(response.url().includes('https://scontent-')){
            const headers = await response.headers();
            const mediaObj = {
                type: headers['content-type'],
