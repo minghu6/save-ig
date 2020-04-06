@@ -3,6 +3,7 @@ const readlineSync = require('readline-sync');
 const expandTilde = require('expand-tilde');
 const axios = require('axios');
 const querystring = require('querystring');  // from axios
+const lineByLine = require('n-readlines');
 
 const fs = require('fs');
 const path = require('path');
@@ -22,6 +23,8 @@ const SCROLL_WAIT = CONFIG_OBJ.scrollWait;
 let downloadStat;
 let enableDebug;
 let latestNumber;
+let specLinks;
+let timeoutBase;  // used for retry
 
 
 const unionSet = (set1, set2) => {
@@ -100,12 +103,11 @@ async function getMediaOwnerUsername (page) {
     const aTags = await page.$$('a');
 
     for (let i=0;i<aTags.length;++i) {
-        const title = await (await aTags[i].getProperty('title')).jsonValue();
         const innerText = await (await aTags[i].getProperty('innerText')).jsonValue();
         const href = await (await aTags[i].getProperty('href')).jsonValue();
         const subUrl = href.match(subUrlMatchPattern)[0];
-        if (title == innerText && subUrl == innerText) {
-            return title;
+        if (subUrl == innerText) {
+            return subUrl;
         }
     }
 }
@@ -114,6 +116,8 @@ const purePostPattern = /(?<=：“)[\w\W]+(?=”)/g;
 
 async function fetchMediaRelatedInfo(page) {
     const subDirName = await getMediaOwnerUsername(page);
+
+    //const subDirName = 'tmp';  // for test
 
     const originPost = await ((await (await page.$('title')).getProperty('innerText')).jsonValue());
 
@@ -129,7 +133,7 @@ async function fetchMediaRelatedInfo(page) {
     const postFn = postName+'.post.txt';
     const postFullPath = path.join(subDir, postFn);
     if (fs.existsSync(postFullPath)) {
-        console.log(`${postFn} existed, skip.\n`);
+        console.log(`${postFn} existed, skip.`);
         downloadStat.skipped += 1;
     } else {
         const postGroup = originPost.match(purePostPattern);
@@ -142,7 +146,6 @@ async function fetchMediaRelatedInfo(page) {
                 translatedPost = await translateOnLine(post);
             } catch (e) {
                 console.error('translate online failed');
-                downloadStat.failed += 1;
                 console.log(`write file ${postFn} failed`);
             }
             let extraPost;
@@ -171,19 +174,17 @@ async function downloadOneMedia(maxSizeMedia, subDir, postName) {
     const mediaFullPath = path.join(subDir, mediaFn);
 
     if (fs.existsSync(mediaFullPath)) {
-        console.log(`${mediaFn} existed, skip.\n`);
+        console.log(`${mediaFn} existed, skip.`);
         downloadStat.skipped += 1;
     } else {
         fs.writeFile(mediaFullPath, await maxSizeMedia.buffer, err => {
             if (err) {
                 console.error(err);
-                downloadStat.failed += 1;
                 throw new Error(`write file ${mediaFn} failed`);
             } else {
                 console.log(`write file ${mediaFn} successful`);
                 downloadStat.saved += 1;
             }
-            console.log('\n');
         })
     }
 }
@@ -210,20 +211,18 @@ async function downloadNPMedia(medias, subDir, postName) {
 
         if (fs.existsSync(mediaFullPath)) {
             if (enableDebug) {
-                console.log(`${mediaFn} existed, skip.\n`);
+                console.log(`${mediaFn} existed, skip.`);
             }
             downloadStat.skipped += 1;
         } else {
             fs.writeFile(mediaFullPath, await media.buffer, err => {
                 if (err) {
                     console.error(err);
-                    downloadStat.failed += 1;
                     throw new Error(`write file ${mediaFn} failed`);
                 } else {
                     console.log(`write file ${mediaFn} successful`);
                     downloadStat.saved += 1;
                 }
-                console.log('\n');
             })
         }
     }
@@ -233,15 +232,43 @@ async function npExisted(page) {
     return (await page.$$('.coreSpriteRightChevron')).length > 0;
 }
 
-async function getPNumber(page) {
+// ensure that all media have been loaded
+async function execNP(page) {
     let count;
-    count = 0;
-    while ((await page.$('.coreSpriteRightChevron')) != null) {
+    count = 1;
+
+    // 对于NP包含视频来说，第一个视频的播放按键是集合的第一个，
+    // 其余视频则是随着滑动，更新的最后一个 
+    let firstVideo;
+    firstVideo = true;
+    while (true) {
+        const ctlBtns = await page.$$('div[aria-label="控制"]');
+
+        let btn;
+        if (firstVideo) {
+            btn = ctlBtns[0];
+            firstVideo = false;
+        } else {
+            btn = ctlBtns.reverse()[0];
+        }
+
+        try {
+            await page.evaluate(e => e.click(), btn);
+        } catch (e) {
+        }
+        // 视频和图片有不同的延时需要
+        if (ctlBtns.length > 0) {
+            await sleep(SCROLL_WAIT * 2 * timeoutBase);
+        } else {
+            await sleep(SCROLL_WAIT * timeoutBase);
+        }
+
+        if ((await page.$('.coreSpriteRightChevron')) == null) break;
         await page.click('.coreSpriteRightChevron');
         count += 1;
     }
 
-    return count + 1;
+    return count;
 }
 
 async function saveMedia(browser, aHref) {
@@ -258,50 +285,67 @@ async function saveMedia(browser, aHref) {
 
     const mediaSet = new CustomizedSet([], media => media.size);
 
-    page.on('response', async function(response){
-        if(response.url().includes('https://scontent-')){
-           const headers = await response.headers();
-           const mediaObj = {
-               type: headers['content-type'],
-               size: parseInt(headers['content-length']),
-               url: response.url(),
-               buffer: response.buffer()
-           }
+    page.on('response', async function (response) {
+        if (response.url().includes('https://scontent-')) {
+            try {
+                const headers = await response.headers();
+                const mediaObj = {
+                    type: headers['content-type'],
+                    size: parseInt(headers['content-length']),
+                    url: response.url(),
+                    buffer: response.buffer()
+                }
 
-           if (mediaObj.type === 'image/jpeg' || mediaObj.type == 'video/mp4') {
-                mediaObj.ext = (mediaObj.type === 'image/jpeg' ? '.jpg' : '.mp4');
-                mediaSet.add(mediaObj);
-           }
+                if (mediaObj.type === 'image/jpeg' || mediaObj.type == 'video/mp4') {
+                    mediaObj.ext = (mediaObj.type === 'image/jpeg' ? '.jpg' : '.mp4');
+                    mediaSet.add(mediaObj);
+                }
+            } catch (e) {
+                console.error(e);
+            }
         }
     })
 
+    const getMaxSizedMedia = () => {
+        const mediaList = mediaSet.toSortedArray().reverse();
+        return mediaList[0];
+    }
+
+    const getTopNMaxSizeMedia = (n) => {
+        const mediaList = mediaSet.toSortedArray().reverse();
+        return mediaList.slice(0, n);
+    }
+
     const _saveMedia = async (page, aHref, reTry=0) => {
         await page.goto(aHref, {waitUntil: 'networkidle0'});
-        //await page.goto('https://www.instagram.com/p/B3Ua0WqFVaw/', {waitUntil: 'networkidle0'});
-        
-        if ((await page.$('div[aria-label="控制"]')) != null) {
-            // 是视频
-            await page.click('div[aria-label="控制"]').catch(e=>{});
-            await sleep(SCROLL_WAIT * 2);
-        }
+        //await page.goto('https://www.instagram.com/p/B59Z1xdFoLv/', {waitUntil: 'networkidle0'});
+        //await page.goto('https://www.instagram.com/p/B4k8wrClAHu/', {waitUntil: 'networkidle0'});
 
-        const mediaList = mediaSet.toSortedArray().reverse();
-        maxSizeMedia = mediaList[0];
-
-        if (maxSizeMedia != undefined) {
+        if (getMaxSizedMedia() != undefined) {
             const {subDir, postName} = await fetchMediaRelatedInfo(page);
 
             if (await npExisted(page)) {
-                const pNumber = await getPNumber(page);
-                await downloadNPMedia(mediaList.slice(0, pNumber), subDir, postName);
+                const pNumber = await execNP(page);
+                await downloadNPMedia(getTopNMaxSizeMedia(pNumber), subDir, postName);
             } else {
+                const btn = await page.$('div[aria-label="控制"]');
+                if (btn != null) {
+                    try {
+                        await page.evaluate(e => e.click(), btn);
+                    } catch (e) {
+                    }
+                    await sleep(SCROLL_WAIT * 2 * timeoutBase);
+                } else {
+                    await sleep(SCROLL_WAIT * timeoutBase);
+                }
+
                 // < 10k
-                if (maxSizeMedia.size < 10000) {
+                if (getMaxSizedMedia().size < 10000) {
                     console.warn('There are maybe something wrong for the file is too tiny.');
                     console.warn(`tiny file aHref: ${aHref}\nfile url:${maxSizeMedia.url}`);
                 }
 
-                await downloadOneMedia(maxSizeMedia, subDir, postName);
+                await downloadOneMedia(getMaxSizedMedia(), subDir, postName);
             }
 
         } else {
@@ -319,17 +363,26 @@ async function saveMedia(browser, aHref) {
 }
 
 async function saveALinks(browser, aLinks) {
+    timeoutBase = 1;
+
     await Promise.all(aLinks.map(async aHref => {
         try {
             await saveMedia(browser, aHref);
         } catch (e) {
-            console.error(`saveMedia failed of ${aHref}`);
             console.error(e);
-            downloadStat.failed += 1;
+            console.error(`saveMedia failed of ${aHref}\n`);
+            downloadStat.failedAHrefSet.add(aHref);
         }
     }));
     // for (let i=0;i<aLinks.length;++i) {
-    //     await saveMedia(browser, aLinks[i]);
+    //     const aHref = aLinks[i];
+    //     try {
+    //         await saveMedia(browser, aHref);
+    //     } catch (e) {
+    //         console.error(e);
+    //         console.error(`saveMedia failed of ${aHref}\n`);
+    //         downloadStat.failedAHrefSet.add(aHref);
+    //     }
     // }  // 一个页面一个页面打开，方便测试
 }
 
@@ -382,6 +435,7 @@ const createDirIfNotExist = dirname => {
 async function main() {
     const username = LOGINNAME;
     latestNumber = Number.MAX_SAFE_INTEGER;
+    let fn;
 
     for (let i=0;i<process.argv.length;++i) {
         if (process.argv[i] == '--debug') {
@@ -390,6 +444,12 @@ async function main() {
 
         if (process.argv[i] == '--latest' && process.argv[i+1]) {
             latestNumber = parseInt(process.argv[i+1]);
+        }
+
+        if (process.argv[i] == '--links') {
+            specLinks = true;
+            fn = process.argv[i+1]
+            timeoutBase = parseInt(process.argv[i+2]);
         }
     }
 
@@ -423,6 +483,25 @@ async function main() {
       ]);
 
     loginPage.close();
+
+    if (specLinks) {
+        liner = new lineByLine(fn);
+        const links = [];
+        let line;
+        while (line = liner.next()) {
+            if (line !== '') {
+                const decodedLine = line.toString('ascii');
+                console.log(decodedLine);
+                links.push(decodedLine);
+            }
+        }
+
+        await saveMediaByLinks(browser, links, timeoutBase);
+
+        await browser.close();
+        return;
+    }
+
     
     const savedUrl = `https://www.instagram.com/${username}/saved/`;
 
@@ -437,6 +516,8 @@ async function main() {
         console.error(e);
     }
     await savedMediaPage.close();
+
+    await tryResolveFailedAHrefs(browser);
     await browser.close();
 }
 
@@ -444,7 +525,8 @@ async function main() {
 downloadStat = {
     skipped: 0,
     saved: 0,
-    failed: 0
+    failed: 0,
+    failedAHrefSet: new Set([])
 };
 
 async function translateOnLine(word) {
@@ -458,6 +540,51 @@ async function translateOnLine(word) {
     return out;
 }
 
+async function saveMediaByLinks(browser, aLinks, base) {
+    timeoutBase = base;
+
+    for (let i=0; i<aLinks.length; ++i) {
+        try {
+            await saveMedia(browser, aLinks[i]);
+            console.log(`${aHref} solved`);
+            downloadStat.failedAHrefSet.delete(aLinks[i])
+        } catch (e) {
+            console.error(e);
+        }
+    }
+}
+
+function writeFailedLinksLog() {
+    const logger = fs.createWriteStream('save_ig_failed_links.log', {flags: 'a'});
+
+    logger.write('aaaaaaa\n');
+    logger.write('bbbbbbb\n');
+    logger.write('ccccccc\n');
+}
+
+async function tryResolveFailedAHrefs(browser) {
+    const aLinks = [...downloadStat.failedAHrefSet];
+    if (aLinks.length == 0) return;
+
+    console.log('\nTry to solve failed aHrefs...');
+
+    await saveMediaByLinks(browser, aLinks, 2);
+    downloadStat.failed = downloadStat.failedAHrefSet.size;
+    if (downloadStat.failed > 0) {
+        await saveMediaByLinks(browser, [...downloadStat.failedAHrefSet], 4);
+    }
+
+    downloadStat.failed = downloadStat.failedAHrefSet.size;
+    if (downloadStat.failed){
+        console.error('\nFailed AHref:');
+
+        Array.from(downloadStat.failedAHrefSet).map(aHref =>{
+            console.error(`${aHref}`);
+        });
+    }
+
+}
+//writeFailedLinksLog();
 // translateOnLine(`你好`)
 main().catch(e => {
     console.log("ERROR .........................................................");
