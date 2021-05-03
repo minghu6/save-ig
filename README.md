@@ -49,5 +49,3 @@ sudo apt-get install gconf-service libasound2 libatk1.0-0 libatk-bridge2.0-0 lib
 1. 多图、视频网络较慢的情况下可能会失败，试用 `npm start --links <links-fn> <n>`来重试
 
 
-## Craft:
-
