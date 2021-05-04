@@ -75,7 +75,7 @@ async function createNewPage(browser) {
         page.inflight -= 1
     })
 
-    
+
     await page._client.send('Network.enable', {
         maxResourceBufferSize: 1024 * 1204 * 100,
         maxTotalBufferSize: 1024 * 1204 * 200,
@@ -196,7 +196,7 @@ async function downloadNPMedia(medias, subDir, postName) {
     //     const imgHandles = liElem.$$('img');
 
     //     if (imgHandles.length == 1) {
-    //         await 
+    //         await
     //     }
     // })
 
@@ -238,7 +238,7 @@ async function execNP(page) {
     count = 1;
 
     // 对于NP包含视频来说，第一个视频的播放按键是集合的第一个，
-    // 其余视频则是随着滑动，更新的最后一个 
+    // 其余视频则是随着滑动，更新的最后一个
     let firstVideo;
     firstVideo = true;
     while (true) {
@@ -349,7 +349,7 @@ async function saveMedia(browser, aHref) {
             }
 
         } else {
-            if (reTry > 0) { 
+            if (reTry > 0) {
                 console.error(`can't find any media ${aHref}`);
             } else {
                 await _saveMedia(page, aHref, reTry+1);
@@ -456,7 +456,7 @@ async function main() {
     const password = readlineSync.question(`@${username} password: `, {hideEchoBack: true});
 
     const browser = await puppeteer.launch({
-        args: ['--no-sandbox', '--lang=zh-CN'],
+        args: ['--no-sandbox', '--lang=en'],
         headless: !enableDebug,
         executablePath: CHROME_PATH
     });
@@ -471,8 +471,8 @@ async function main() {
         await dialog.dismiss();
     });
 
-    await loginPage.goto('https://www.instagram.com/accounts/login/?hl=zh-cn', {waitUntil: 'networkidle0'});
-    
+    await loginPage.goto('https://www.instagram.com/accounts/login/', {waitUntil: 'networkidle0'});
+
     console.log('login Page loaded!')
     await loginPage.type('input[name="username"]', LOGINNAME);
     await loginPage.type('input[name="password"]', password);
@@ -502,12 +502,15 @@ async function main() {
         return;
     }
 
-    
-    const savedUrl = `https://www.instagram.com/${username}/saved/`;
 
+    const savedUrl = `https://www.instagram.com/${username}/saved/`;
     const savedMediaPage = await createNewPage(browser);
     await savedMediaPage.goto(savedUrl, {waitUntil: 'networkidle0'});
     console.log('saved Page loaded!');
+
+    const allPostUrl = `https://www.instagram.com/${username}/saved/all-posts`
+    await savedMediaPage.goto(allPostUrl, {waitUntil: 'networkidle0'});
+    console.log('all posts Page loaded!');
 
     try {
         await loadSavedPage(browser, savedMediaPage);

@@ -4,7 +4,7 @@
 ## Usage:
 ```bash
 node:
-    node app.js 
+    node app.js --debug
 args:
     --debug  // headless: false
     --latest  // update latest number of saved page
@@ -12,7 +12,7 @@ args:
 
 npm:
     npm test -- --latest 30
-    npm start --links a.tmp 2
+    npm start -- --links a.tmp 2
 ```
 
 
@@ -43,9 +43,11 @@ sudo apt-get install gconf-service libasound2 libatk1.0-0 libatk-bridge2.0-0 lib
 * input password on console
 * For Windows or WSL, code's disk partition should be same with chrome.exe's
 ## Issue:
-1. unknown behavior upon download Big video
-1. 访问ig的语言限定简中 (一些元素定位依靠本地化的字符串比对)
 1. 更能最重要的是chrome简直是吃内存的怪兽，8G电脑跑基本上只能运行一个实例
 1. 多图、视频网络较慢的情况下可能会失败，试用 `npm start --links <links-fn> <n>`来重试
+1. 无头浏览器看不到页面结构，不好调试，现在只能开着浏览器`--debug`
 
-
+## TODO:
+1. Facebook合作帐号的登录
+1. 新的IG收藏分类了，考虑支持这一变动
+1. 前端就是一个轻而易举地消耗时间然后每次从发明轮子开始的时尚领域，我是干别的去了，所以以上TODO大概就是NOT-TODO
